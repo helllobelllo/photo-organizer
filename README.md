@@ -41,6 +41,21 @@ Photos are **moved**, not copied, so the input folder ends up empty — except f
 duplicates, which are deliberately left behind (see below). Files that aren't
 photos are left where they are.
 
+## Dropping in folders
+
+You can put loose photos in the input folder, or whole folders, or folders of
+folders — a card dump, a shared album, an old backup tree. Everything is searched
+recursively to any depth, and the original folder names have no effect on where
+photos end up: only their metadata decides that.
+
+After a run, folders that have been emptied are removed for you. Anything that
+isn't a photo stays exactly where it is, and the app lists what's left and where,
+so nothing quietly disappears into a subfolder you forget about.
+
+Nested imports commonly contain the same photo more than once (a backup folder
+alongside the originals). Those are caught by content — see Duplicate detection
+below.
+
 ## The travel log (for photos without GPS)
 
 Open `travel_log_template.xlsx`, fill in one row per trip, and save it somewhere

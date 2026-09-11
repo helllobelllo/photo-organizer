@@ -63,6 +63,7 @@ class RunSummary:
     moved: int = 0
     failed: list[tuple[Path, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    skipped_files: list[Path] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------------------
@@ -452,10 +453,7 @@ def build_plan(
     summary = RunSummary()
     photos, others = find_photos(input_dir)
 
-    if others:
-        summary.warnings.append(
-            f"{len(others)} non-photo file(s) found in the input folder - these are left untouched."
-        )
+    summary.skipped_files = others
 
     plans = [extract_metadata(path) for path in photos]
     summary.total = len(plans)
@@ -544,6 +542,13 @@ def execute_plan(
     return summary
 
 
+def remaining_files(input_dir: Path) -> list[Path]:
+    """Files still sitting in the input folder after a run."""
+    if not input_dir.exists():
+        return []
+    return sorted(p for p in input_dir.rglob("*") if p.is_file())
+
+
 def remove_empty_subfolders(root: Path) -> None:
     """Clean up directories left behind in the input folder after moving files out."""
     for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
@@ -572,6 +577,11 @@ def write_review_log(output_dir: Path, plans: list[PhotoPlan], summary: RunSumma
         f"Files moved/copied     : {summary.moved}",
         "",
     ]
+
+    if summary.skipped_files:
+        lines.append("Not photos, left where they were:")
+        lines.extend(f"  - {path}" for path in summary.skipped_files)
+        lines.append("")
 
     duplicates = [p for p in plans if p.is_duplicate]
     if duplicates:

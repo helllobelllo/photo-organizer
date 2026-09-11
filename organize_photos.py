@@ -63,11 +63,22 @@ def main(argv=None) -> int:
     for warning in summary.warnings:
         print(f"\nWarning: {warning}")
 
+    if summary.skipped_files:
+        print(f"\nNot photos, left alone ({len(summary.skipped_files)}):")
+        for path in summary.skipped_files[:12]:
+            print(f"    {path.relative_to(args.source)}")
+        if len(summary.skipped_files) > 12:
+            print(f"    ... and {len(summary.skipped_files) - 12} more")
+
     if args.run:
         core.execute_plan(plans, summary, move=not args.copy)
         if not args.copy:
             core.remove_empty_subfolders(args.source)
         log_path = core.write_review_log(args.destination, plans, summary)
+        left = core.remaining_files(args.source)
+        print(f"\nStill in the input folder: {len(left)} file(s)")
+        for path in left[:12]:
+            print(f"    {path.relative_to(args.source)}")
         print(f"\nLog written to: {log_path}")
     else:
         print("\nThis was a preview. Re-run with --run to move the files.")

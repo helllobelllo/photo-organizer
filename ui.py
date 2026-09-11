@@ -164,6 +164,17 @@ class PhotoOrganizerApp:
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
+    def _log_paths(self, paths, base: Path, limit: int = 12) -> None:
+        """List paths relative to the input folder, so nested leftovers are findable."""
+        for path in paths[:limit]:
+            try:
+                shown = path.relative_to(base)
+            except ValueError:
+                shown = path
+            self._log(f"    {shown}")
+        if len(paths) > limit:
+            self._log(f"    ... and {len(paths) - limit} more")
+
     def _clear_log(self) -> None:
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
@@ -250,6 +261,11 @@ class PhotoOrganizerApp:
         )
         for warning in summary.warnings:
             self._log(f"Warning: {warning}")
+        if summary.skipped_files:
+            self._log(
+                f"{len(summary.skipped_files)} file(s) are not photos and stay where they are:"
+            )
+            self._log_paths(summary.skipped_files, Path(self.input_var.get()))
         if summary.duplicates:
             self._log(
                 f"{summary.duplicates} photo(s) are already in your library (shown in grey). "
@@ -325,6 +341,13 @@ class PhotoOrganizerApp:
             self._log(f"  Failed               : {len(summary.failed)}")
             for path, reason in summary.failed:
                 self._log(f"    - {path.name}: {reason}")
+        left = core.remaining_files(Path(self.input_var.get()))
+        self._log("")
+        if left:
+            self._log(f"Still in the input folder ({len(left)} file(s)):")
+            self._log_paths(left, Path(self.input_var.get()))
+        else:
+            self._log("The input folder is now empty.")
         self._log(f"Log written to: {log_path}")
 
         self.tree.delete(*self.tree.get_children())
