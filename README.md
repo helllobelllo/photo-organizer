@@ -37,8 +37,9 @@ The window has two buttons, meant to be used in order:
 By default it reads from `Desktop\INPUT_PHOTO_ORGANIZOR` and writes to
 `Desktop\ORGANIZED_PHOTOS`. Both paths are editable in the window.
 
-Photos are **moved**, not copied, so the input folder ends up empty. Files that
-aren't photos are left where they are.
+Photos are **moved**, not copied, so the input folder ends up empty — except for
+duplicates, which are deliberately left behind (see below). Files that aren't
+photos are left where they are.
 
 ## The travel log (for photos without GPS)
 
@@ -61,6 +62,33 @@ Regenerate a fresh blank template any time:
 ```bash
 python make_travel_log_template.py
 ```
+
+## Duplicate detection
+
+Before moving anything, each photo is compared against everything already in the
+output folder. A photo that's already there is **left in the input folder and
+flagged** (shown in grey in the app) rather than filed a second time.
+
+The comparison is on **file content**, not filename — a SHA-256 hash of the bytes.
+Renaming is exactly what this tool does to your photos, so names are useless for
+identity; a photo already filed as `CHINA_2026-06-01_001.ARW` is still recognised
+when you re-import it as `DSC00605.ARW`.
+
+Duplicates within a single batch are caught too: if the same photo appears twice
+in the input folder, the first is filed and the second is flagged.
+
+Hashing every photo in a large library on every scan would be far too slow, so
+file size is used as a pre-filter — two files of different sizes cannot be
+identical, so only same-size candidates are ever hashed. Size alone is never
+treated as proof; two different photos that happen to share a byte count are
+correctly kept apart.
+
+Because duplicates stay put, the input folder won't be empty after a run that
+found any. That's deliberate — deleting photos is left to you.
+
+**Limitation:** this detects byte-identical files. A photo that has been
+re-exported, resized, or had its metadata rewritten is a different file and will
+be filed as a new photo.
 
 ## What lands in `_NeedsReview`
 

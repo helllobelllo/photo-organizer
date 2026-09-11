@@ -116,6 +116,7 @@ class PhotoOrganizerApp:
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.tree.tag_configure("review", foreground="#b45309")
+        self.tree.tag_configure("duplicate", foreground="#6b7280")
 
         log_frame = ttk.LabelFrame(self.root, text="Messages")
         log_frame.pack(fill="both", **padding)
@@ -219,24 +220,29 @@ class PhotoOrganizerApp:
 
         for plan in self.plans:
             date_text = f"{plan.capture_date:%Y-%m-%d}" if plan.capture_date else "unknown"
-            country = plan.country or core.NEEDS_REVIEW_DIR
-            destination = plan.destination_path
-            relative = (
-                str(destination.relative_to(Path(self.output_var.get())))
-                if destination
-                else ""
-            )
+
+            if plan.is_duplicate:
+                country, matched = "Duplicate", "-"
+                relative = f"stays in input - already have {plan.duplicate_of.name}"
+                tags = ("duplicate",)
+            else:
+                country = plan.country or core.NEEDS_REVIEW_DIR
+                matched = plan.country_source
+                relative = str(plan.destination_path.relative_to(Path(self.output_var.get())))
+                tags = ("review",) if plan.needs_review else ()
+
             self.tree.insert(
                 "",
                 "end",
-                values=(plan.source_path.name, date_text, country, plan.country_source, relative),
-                tags=("review",) if plan.needs_review else (),
+                values=(plan.source_path.name, date_text, country, matched, relative),
+                tags=tags,
             )
 
         summary = self.summary
         self.status_var.set(
             f"{summary.total} photo(s) ready - {summary.by_gps} by GPS, "
-            f"{summary.by_travel_log} by travel log, {summary.needs_review} need review."
+            f"{summary.by_travel_log} by travel log, {summary.needs_review} need review, "
+            f"{summary.duplicates} duplicate(s)."
         )
         self._log(
             f"Found {summary.total} photo(s). Nothing has been moved yet - "
@@ -244,6 +250,11 @@ class PhotoOrganizerApp:
         )
         for warning in summary.warnings:
             self._log(f"Warning: {warning}")
+        if summary.duplicates:
+            self._log(
+                f"{summary.duplicates} photo(s) are already in your library (shown in grey). "
+                "They stay in the input folder so you can delete them yourself."
+            )
         if summary.needs_review:
             self._log(
                 f"{summary.needs_review} photo(s) will go to '{core.NEEDS_REVIEW_DIR}' "
@@ -256,11 +267,17 @@ class PhotoOrganizerApp:
         if not self.plans or self.summary is None:
             return
 
-        if not messagebox.askyesno(
-            "Move photos?",
-            f"{len(self.plans)} photo(s) will be moved out of the input folder into:\n"
-            f"{self.output_var.get()}\n\nThe input folder will be left empty. Continue?",
-        ):
+        movable = len(self.plans) - self.summary.duplicates
+        message = (
+            f"{movable} photo(s) will be moved out of the input folder into:\n"
+            f"{self.output_var.get()}\n\n"
+        )
+        message += (
+            f"{self.summary.duplicates} duplicate(s) will stay in the input folder.\n\nContinue?"
+            if self.summary.duplicates
+            else "The input folder will be left empty. Continue?"
+        )
+        if not messagebox.askyesno("Move photos?", message):
             return
 
         self._set_busy(True)
@@ -292,14 +309,18 @@ class PhotoOrganizerApp:
         self._set_busy(False)
         self.organize_button.configure(state="disabled")
 
-        self.status_var.set(
-            f"Done - {summary.moved} photo(s) moved. Input folder is now empty."
+        remaining = (
+            f"{summary.duplicates} duplicate(s) left in the input folder."
+            if summary.duplicates
+            else "Input folder is now empty."
         )
+        self.status_var.set(f"Done - {summary.moved} photo(s) moved. {remaining}")
         self._log("")
         self._log(f"Moved {summary.moved} of {summary.total} photo(s).")
         self._log(f"  Matched by GPS       : {summary.by_gps}")
         self._log(f"  Matched by travel log: {summary.by_travel_log}")
         self._log(f"  Needed review        : {summary.needs_review}")
+        self._log(f"  Duplicates skipped   : {summary.duplicates}")
         if summary.failed:
             self._log(f"  Failed               : {len(summary.failed)}")
             for path, reason in summary.failed:

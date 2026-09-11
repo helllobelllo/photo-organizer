@@ -50,6 +50,10 @@ def main(argv=None) -> int:
     print(f"\n{action} - {len(plans)} photo(s)\n")
 
     for plan in plans:
+        if plan.is_duplicate:
+            print(f" = {plan.source_path.name}  ->  stays put, duplicate")
+            print(f"     already in library as: {plan.duplicate_of.name}")
+            continue
         relative = plan.destination_path.relative_to(args.destination)
         marker = "!" if plan.needs_review else " "
         print(f" {marker} {plan.source_path.name}  ->  {relative}")
@@ -70,7 +74,8 @@ def main(argv=None) -> int:
 
     print(
         f"\nTotal: {summary.total} | GPS: {summary.by_gps} | "
-        f"Travel log: {summary.by_travel_log} | Needs review: {summary.needs_review}"
+        f"Travel log: {summary.by_travel_log} | Needs review: {summary.needs_review} | "
+        f"Duplicates: {summary.duplicates}"
     )
     if summary.failed:
         print(f"Failed: {len(summary.failed)}")

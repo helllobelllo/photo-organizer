@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
+import hashlib
 import os
 import re
 import shutil
@@ -41,10 +42,15 @@ class PhotoPlan:
     country_source: str = SOURCE_NONE
     destination_path: Path | None = None
     review_reason: str | None = None
+    duplicate_of: Path | None = None
+
+    @property
+    def is_duplicate(self) -> bool:
+        return self.duplicate_of is not None
 
     @property
     def needs_review(self) -> bool:
-        return self.country is None
+        return self.country is None and not self.is_duplicate
 
 
 @dataclass
@@ -53,6 +59,7 @@ class RunSummary:
     by_gps: int = 0
     by_travel_log: int = 0
     needs_review: int = 0
+    duplicates: int = 0
     moved: int = 0
     failed: list[tuple[Path, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -337,6 +344,69 @@ def find_photos(input_dir: Path) -> tuple[list[Path], list[Path]]:
     return photos, others
 
 
+def file_digest(path: Path) -> str:
+    """SHA-256 of the file's bytes. Content-based, so renaming doesn't affect it."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def index_library_by_size(output_dir: Path) -> dict[int, list[Path]]:
+    """Map byte-size -> photos already in the library.
+
+    Size is the cheap pre-filter: two files of different sizes can never be
+    identical, so only same-size candidates are ever hashed.
+    """
+    index: dict[int, list[Path]] = {}
+    if not output_dir.exists():
+        return index
+    for path in output_dir.rglob("*"):
+        if path.is_file() and path.suffix.lower() in PHOTO_EXTENSIONS:
+            try:
+                index.setdefault(path.stat().st_size, []).append(path)
+            except OSError:
+                continue
+    return index
+
+
+def _cached_digest(path: Path, cache: dict[Path, str]) -> str:
+    if path not in cache:
+        cache[path] = file_digest(path)
+    return cache[path]
+
+
+def find_duplicate(
+    path: Path,
+    library: dict[int, list[Path]],
+    batch: dict[int, list[Path]],
+    cache: dict[Path, str],
+) -> Path | None:
+    """Return the existing photo `path` duplicates, or None."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+
+    rivals = list(library.get(size, ())) + list(batch.get(size, ()))
+    if not rivals:
+        return None
+
+    try:
+        mine = _cached_digest(path, cache)
+    except OSError:
+        return None
+
+    for other in rivals:
+        try:
+            if _cached_digest(other, cache) == mine:
+                return other
+        except OSError:
+            continue
+    return None
+
+
 class _NameAllocator:
     """Hands out the next free sequence number per (folder, country, date)."""
 
@@ -394,8 +464,22 @@ def build_plan(
 
     allocator = _NameAllocator()
     review_dir = output_dir / NEEDS_REVIEW_DIR
+    library = index_library_by_size(output_dir)
+    digest_cache: dict[Path, str] = {}
+    batch: dict[int, list[Path]] = {}
 
     for plan in plans:
+        original = find_duplicate(plan.source_path, library, batch, digest_cache)
+        if original is not None:
+            plan.duplicate_of = original
+            summary.duplicates += 1
+            continue
+
+        try:
+            batch.setdefault(plan.source_path.stat().st_size, []).append(plan.source_path)
+        except OSError:
+            pass
+
         if plan.country is None or plan.capture_date is None:
             if plan.review_reason is None:
                 if plan.capture_date is None:
@@ -479,9 +563,17 @@ def write_review_log(output_dir: Path, plans: list[PhotoPlan], summary: RunSumma
         f"Matched by GPS         : {summary.by_gps}",
         f"Matched by travel log  : {summary.by_travel_log}",
         f"Needs review           : {summary.needs_review}",
+        f"Duplicates skipped     : {summary.duplicates}",
         f"Files moved/copied     : {summary.moved}",
         "",
     ]
+
+    duplicates = [p for p in plans if p.is_duplicate]
+    if duplicates:
+        lines.append("Duplicates left in the input folder (already in the library):")
+        for plan in duplicates:
+            lines.append(f"  - {plan.source_path.name}: same content as {plan.duplicate_of}")
+        lines.append("")
 
     if summary.warnings:
         lines.append("Warnings:")
