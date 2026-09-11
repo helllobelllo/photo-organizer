@@ -1,0 +1,111 @@
+# Photo Organizer
+
+Sorts travel photos into country folders and renames them from their own metadata.
+
+A photo taken in Paris on 5 June 2024 becomes:
+
+```
+ORGANIZED_PHOTOS/France/FRANCE_2024-06-05_001.jpg
+```
+
+Country comes from the GPS coordinates stored in the photo's EXIF data, looked up
+**offline** — your location history never leaves your machine. Photos without GPS
+(most dedicated cameras) fall back to an Excel travel log you keep yourself.
+
+## Install
+
+Requires Python 3.10 or newer.
+
+```bash
+pip install -r requirements.txt
+```
+
+## Use the app
+
+```bash
+python ui.py
+```
+
+The window has two buttons, meant to be used in order:
+
+1. **Scan input folder** — reads every photo and shows you exactly where each one
+   would go. Nothing is moved. Photos that can't be placed appear in orange.
+2. **Organize & move photos** — moves them for real, after a confirmation prompt.
+
+By default it reads from `Desktop\INPUT_PHOTO_ORGANIZOR` and writes to
+`Desktop\ORGANIZED_PHOTOS`. Both paths are editable in the window.
+
+Photos are **moved**, not copied, so the input folder ends up empty. Files that
+aren't photos are left where they are.
+
+## The travel log (for photos without GPS)
+
+Open `travel_log_template.xlsx`, fill in one row per trip, and save it somewhere
+you'll keep it:
+
+| Country | Start Date | End Date   |
+| ------- | ---------- | ---------- |
+| France  | 2024-06-01 | 2024-06-14 |
+| Italy   | 2024-06-15 | 2024-06-22 |
+
+Any photo with no GPS but a capture date inside one of these ranges gets that
+country. Point the app at this file with the **Travel log** field.
+
+Dates must be `YYYY-MM-DD`. If two rows overlap and name different countries, the
+app warns you and sends the affected photos to `_NeedsReview` rather than guessing.
+
+Regenerate a fresh blank template any time:
+
+```bash
+python make_travel_log_template.py
+```
+
+## What lands in `_NeedsReview`
+
+A photo goes to `ORGANIZED_PHOTOS/_NeedsReview/` when it has no GPS and no travel
+log row covers its date, when no capture date can be read at all, or when its date
+falls into overlapping travel-log rows. Every run writes an `organizer_log_*.txt`
+into the output folder listing each file and the reason.
+
+## File naming
+
+```
+COUNTRY_YYYY-MM-DD_NNN.ext
+```
+
+`NNN` starts at `001` and counts up for each photo sharing the same country and
+date. Re-running is safe: numbering continues past whatever is already in the
+destination folder, so nothing is ever overwritten.
+
+## Command line
+
+The same logic without the window. It previews by default and only touches files
+when you pass `--run`:
+
+```bash
+python organize_photos.py "C:\Users\You\Desktop\INPUT_PHOTO_ORGANIZOR" "C:\Users\You\Desktop\ORGANIZED_PHOTOS" --travel-log travel_log.xlsx
+```
+
+```bash
+python organize_photos.py "C:\Users\You\Desktop\INPUT_PHOTO_ORGANIZOR" "C:\Users\You\Desktop\ORGANIZED_PHOTOS" --travel-log travel_log.xlsx --run
+```
+
+Other flags: `--copy` (leave originals in place), `--group-by-year` (add a year
+subfolder inside each country).
+
+## Supported files
+
+JPEG, PNG, TIFF, HEIC/HEIF, and RAW formats (CR2, CR3, NEF, ARW, DNG, ORF, RW2,
+RAF, PEF). RAW files are read with `exifread`, which parses their headers directly
+without needing to decode the image. A corrupt or unreadable file is logged and
+skipped — it never stops the run.
+
+## Project layout
+
+| File                          | Purpose                                             |
+| ----------------------------- | --------------------------------------------------- |
+| `core.py`                     | Metadata, country lookup, naming, moving             |
+| `ui.py`                       | The desktop window                                   |
+| `organize_photos.py`          | Command-line interface                               |
+| `make_travel_log_template.py` | Regenerates the blank travel log                     |
+| `travel_log_template.xlsx`    | Starter travel log to fill in                        |

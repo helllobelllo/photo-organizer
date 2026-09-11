@@ -1,0 +1,6 @@
+Pillow
+pillow-heif
+exifread
+reverse_geocoder
+pycountry
+openpyxl

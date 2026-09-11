@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+organizer_log_*.txt
+travel_log.xlsx
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.HEIC
+*.CR2
+*.NEF
+*.ARW
+*.DNG
