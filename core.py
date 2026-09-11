@@ -5,6 +5,7 @@ The UI (ui.py) and the CLI (organize_photos.py) are both thin wrappers around th
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import os
 import re
@@ -361,11 +362,16 @@ class _NameAllocator:
             counter += 1
 
 
+def photo_folder(output_dir: Path, country: str, captured: dt.datetime) -> Path:
+    """Country/Year/Month, e.g. ORGANIZED_PHOTOS/China/2026/06-June."""
+    month = f"{captured.month:02d}-{calendar.month_name[captured.month]}"
+    return output_dir / country / f"{captured.year:04d}" / month
+
+
 def build_plan(
     input_dir: Path,
     output_dir: Path,
     travel_log: Path | None = None,
-    group_by_year: bool = False,
 ) -> tuple[list[PhotoPlan], RunSummary]:
     """Scan the input folder and compute every photo's destination. Touches no files."""
     summary = RunSummary()
@@ -390,7 +396,7 @@ def build_plan(
     review_dir = output_dir / NEEDS_REVIEW_DIR
 
     for plan in plans:
-        if plan.country is None:
+        if plan.country is None or plan.capture_date is None:
             if plan.review_reason is None:
                 if plan.capture_date is None:
                     plan.review_reason = "No capture date could be read from this file."
@@ -407,10 +413,7 @@ def build_plan(
             summary.needs_review += 1
             continue
 
-        folder = output_dir / plan.country
-        if group_by_year:
-            folder = folder / str(plan.capture_date.year)
-
+        folder = photo_folder(output_dir, plan.country, plan.capture_date)
         stem = f"{country_slug(plan.country)}_{plan.capture_date.date():%Y-%m-%d}"
         plan.destination_path = allocator.allocate(folder, stem, plan.source_path.suffix)
 

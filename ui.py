@@ -40,7 +40,6 @@ class PhotoOrganizerApp:
         self.output_var = tk.StringVar(value=str(desktop / OUTPUT_FOLDER_NAME))
         default_log = desktop / "travel_log.xlsx"
         self.travel_log_var = tk.StringVar(value=str(default_log) if default_log.is_file() else "")
-        self.group_by_year_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Pick your folders, then scan the input folder.")
 
         self.plans: list[core.PhotoPlan] = []
@@ -73,10 +72,10 @@ class PhotoOrganizerApp:
             folders, 2, "Travel log (optional)", self.travel_log_var, self._browse_travel_log
         )
 
-        ttk.Checkbutton(
+        ttk.Label(
             folders,
-            text="Also group into a year subfolder inside each country",
-            variable=self.group_by_year_var,
+            text="Photos are filed as Country \\ Year \\ Month.",
+            foreground="#555555",
         ).grid(row=3, column=1, sticky="w", padx=6, pady=(0, 8))
 
         actions = ttk.Frame(self.root)
@@ -196,11 +195,10 @@ class PhotoOrganizerApp:
         self.status_var.set("Scanning photos and looking up locations...")
 
         travel_log = Path(self.travel_log_var.get()) if self.travel_log_var.get().strip() else None
-        group_by_year = self.group_by_year_var.get()
 
         def worker():
             try:
-                plans, summary = core.build_plan(input_dir, output_dir, travel_log, group_by_year)
+                plans, summary = core.build_plan(input_dir, output_dir, travel_log)
                 self.events.put(("scan_done", (plans, summary)))
             except Exception as error:
                 self.events.put(("error", str(error)))

@@ -5,8 +5,10 @@ Sorts travel photos into country folders and renames them from their own metadat
 A photo taken in Paris on 5 June 2024 becomes:
 
 ```
-ORGANIZED_PHOTOS/France/FRANCE_2024-06-05_001.jpg
+ORGANIZED_PHOTOS/France/2024/06-June/FRANCE_2024-06-05_001.jpg
 ```
+
+Folders are always **Country / Year / Month**.
 
 Country comes from the GPS coordinates stored in the photo's EXIF data, looked up
 **offline** — your location history never leaves your machine. Photos without GPS
@@ -67,15 +69,26 @@ log row covers its date, when no capture date can be read at all, or when its da
 falls into overlapping travel-log rows. Every run writes an `organizer_log_*.txt`
 into the output folder listing each file and the reason.
 
-## File naming
+## Folders and file naming
 
 ```
-COUNTRY_YYYY-MM-DD_NNN.ext
+ORGANIZED_PHOTOS/
+  China/
+    2025/
+      12-December/  CHINA_2025-12-24_001.ARW
+    2026/
+      06-June/      CHINA_2026-06-01_001.ARW
+                    CHINA_2026-06-14_001.ARW
+      07-July/      CHINA_2026-07-03_001.jpg
+  _NeedsReview/
 ```
 
-`NNN` starts at `001` and counts up for each photo sharing the same country and
-date. Re-running is safe: numbering continues past whatever is already in the
-destination folder, so nothing is ever overwritten.
+Month folders are numbered so they sort chronologically rather than
+alphabetically. Files are named `COUNTRY_YYYY-MM-DD_NNN.ext`, where `NNN` starts
+at `001` and counts up for each photo sharing the same country and date.
+
+Existing folders are reused, never replaced. Re-running is safe: numbering
+continues past whatever is already in the destination, so nothing is overwritten.
 
 ## Command line
 
@@ -90,8 +103,7 @@ python organize_photos.py "C:\Users\You\Desktop\INPUT_PHOTO_ORGANIZOR" "C:\Users
 python organize_photos.py "C:\Users\You\Desktop\INPUT_PHOTO_ORGANIZOR" "C:\Users\You\Desktop\ORGANIZED_PHOTOS" --travel-log travel_log.xlsx --run
 ```
 
-Other flags: `--copy` (leave originals in place), `--group-by-year` (add a year
-subfolder inside each country).
+Other flags: `--copy` (leave originals in place).
 
 ## Supported files
 

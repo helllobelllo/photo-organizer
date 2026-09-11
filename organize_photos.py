@@ -27,10 +27,6 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Copy instead of moving (the input folder keeps its photos).",
     )
     parser.add_argument(
-        "--group-by-year", action="store_true",
-        help="Add a year subfolder inside each country folder.",
-    )
-    parser.add_argument(
         "--run", action="store_true",
         help="Actually move/copy files. Without this flag the script only previews.",
     )
@@ -44,9 +40,7 @@ def main(argv=None) -> int:
         print(f"Source folder does not exist: {args.source}", file=sys.stderr)
         return 1
 
-    plans, summary = core.build_plan(
-        args.source, args.destination, args.travel_log, args.group_by_year
-    )
+    plans, summary = core.build_plan(args.source, args.destination, args.travel_log)
 
     if not plans:
         print("No photos found.")
