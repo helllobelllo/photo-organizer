@@ -402,7 +402,7 @@ def build_plan(
                 else:
                     plan.review_reason = "GPS coordinates could not be matched to a country."
             plan.destination_path = allocator.allocate(
-                review_dir, plan.source_path.stem, plan.source_path.suffix.lower()
+                review_dir, plan.source_path.stem, plan.source_path.suffix
             )
             summary.needs_review += 1
             continue
@@ -412,7 +412,7 @@ def build_plan(
             folder = folder / str(plan.capture_date.year)
 
         stem = f"{country_slug(plan.country)}_{plan.capture_date.date():%Y-%m-%d}"
-        plan.destination_path = allocator.allocate(folder, stem, plan.source_path.suffix.lower())
+        plan.destination_path = allocator.allocate(folder, stem, plan.source_path.suffix)
 
         if plan.country_source == SOURCE_GPS:
             summary.by_gps += 1

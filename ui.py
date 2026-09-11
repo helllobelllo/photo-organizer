@@ -38,7 +38,8 @@ class PhotoOrganizerApp:
         desktop = desktop_path()
         self.input_var = tk.StringVar(value=str(desktop / INPUT_FOLDER_NAME))
         self.output_var = tk.StringVar(value=str(desktop / OUTPUT_FOLDER_NAME))
-        self.travel_log_var = tk.StringVar(value="")
+        default_log = desktop / "travel_log.xlsx"
+        self.travel_log_var = tk.StringVar(value=str(default_log) if default_log.is_file() else "")
         self.group_by_year_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Pick your folders, then scan the input folder.")
 
