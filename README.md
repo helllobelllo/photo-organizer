@@ -135,10 +135,31 @@ Other flags: `--copy` (leave originals in place).
 
 ## Supported files
 
-JPEG, PNG, TIFF, HEIC/HEIF, and RAW formats (CR2, CR3, NEF, ARW, DNG, ORF, RW2,
-RAF, PEF). RAW files are read with `exifread`, which parses their headers directly
-without needing to decode the image. A corrupt or unreadable file is logged and
-skipped — it never stops the run.
+| Format | Extensions | Notes |
+| ------ | ---------- | ----- |
+| JPEG | `.jpg` `.jpeg` | Date + GPS verified |
+| HEIC / HEIF | `.heic` `.heif` | iPhone default; date + GPS verified |
+| PNG | `.png` | Date + GPS verified when present |
+| TIFF | `.tif` `.tiff` | Date + GPS verified |
+| RAW | `.cr2` `.cr3` `.nef` `.arw` `.dng` `.orf` `.rw2` `.raf` `.pef` | Date verified on Sony `.ARW` |
+
+All formats go through the same pipeline — folders, naming, travel-log fallback
+and duplicate detection behave identically regardless of type, and a single
+import can mix them freely.
+
+RAW files are read with `exifread`, which parses their headers directly without
+decoding the image. HEIC needs `pillow-heif`, which is in `requirements.txt`.
+Mixed imports are numbered so each photo gets its own sequence number: an iPhone
+HEIC and a camera RAW shot the same day become `_001` and `_002`, not two files
+both called `_001`.
+
+Most RAW files carry no GPS, so they rely on the travel log. Phone photos
+normally carry GPS and sort themselves.
+
+To add a format, add its extension to `PHOTO_EXTENSIONS` in `core.py` — anything
+`exifread` or Pillow can open will work.
+
+A corrupt or unreadable file is logged and skipped — it never stops the run.
 
 ## Project layout
 

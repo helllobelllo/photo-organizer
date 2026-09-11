@@ -408,27 +408,32 @@ def find_duplicate(
 
 
 class _NameAllocator:
-    """Hands out the next free sequence number per (folder, country, date)."""
+    """Hands out the next free sequence number per (folder, country, date).
+
+    Numbers are reserved by stem, ignoring extension, so a HEIC and an ARW taken
+    on the same day get different numbers instead of both landing on _001 and
+    looking like one photo stored in two formats.
+    """
 
     def __init__(self) -> None:
         self._used: dict[Path, set[str]] = {}
 
     def _existing(self, folder: Path) -> set[str]:
         if folder not in self._used:
-            names = set()
+            stems = set()
             if folder.exists():
-                names = {p.name.lower() for p in folder.iterdir() if p.is_file()}
-            self._used[folder] = names
+                stems = {p.stem.lower() for p in folder.iterdir() if p.is_file()}
+            self._used[folder] = stems
         return self._used[folder]
 
     def allocate(self, folder: Path, stem: str, extension: str) -> Path:
         taken = self._existing(folder)
         counter = 1
         while True:
-            candidate = f"{stem}_{counter:03d}{extension}"
+            candidate = f"{stem}_{counter:03d}"
             if candidate.lower() not in taken:
                 taken.add(candidate.lower())
-                return folder / candidate
+                return folder / f"{candidate}{extension}"
             counter += 1
 
 
