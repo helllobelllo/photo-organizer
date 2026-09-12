@@ -5,7 +5,7 @@ Sorts travel photos into country folders and renames them from their own metadat
 A photo taken in Paris on 5 June 2024 becomes:
 
 ```
-ORGANIZED_PHOTOS/France/2024/06-June/FRANCE_2024-06-05_001.jpg
+ORGANIZED_PHOTOS/France/2024/06-June/FRANCE_24-06-05_001.jpg
 ```
 
 Folders are always **Country / Year / Month**.
@@ -86,7 +86,7 @@ flagged** (shown in grey in the app) rather than filed a second time.
 
 The comparison is on **file content**, not filename — a SHA-256 hash of the bytes.
 Renaming is exactly what this tool does to your photos, so names are useless for
-identity; a photo already filed as `CHINA_2026-06-01_001.ARW` is still recognised
+identity; a photo already filed as `CHINA_26-06-01_001.ARW` is still recognised
 when you re-import it as `DSC00605.ARW`.
 
 Duplicates within a single batch are caught too: if the same photo appears twice
@@ -118,17 +118,21 @@ into the output folder listing each file and the reason.
 ORGANIZED_PHOTOS/
   China/
     2025/
-      12-December/  CHINA_2025-12-24_001.ARW
+      12-December/  CHINA_25-12-24_001.ARW
     2026/
-      06-June/      CHINA_2026-06-01_001.ARW
-                    CHINA_2026-06-14_001.ARW
-      07-July/      CHINA_2026-07-03_001.jpg
+      06-June/      CHINA_26-06-01_001.ARW
+                    CHINA_26-06-14_001.ARW
+      07-July/      CHINA_26-07-03_001.jpg
   _NeedsReview/
 ```
 
 Month folders are numbered so they sort chronologically rather than
-alphabetically. Files are named `COUNTRY_YYYY-MM-DD_NNN.ext`, where `NNN` starts
+alphabetically. Files are named `COUNTRY_YY-MM-DD_NNN.ext`, where `NNN` starts
 at `001` and counts up for each photo sharing the same country and date.
+
+The year is two digits in the **filename** but stays four digits in the **folder**,
+so the full year is never lost — worth knowing, since `25` alone can't tell 1925
+from 2025.
 
 Existing folders are reused, never replaced. Re-running is safe: numbering
 continues past whatever is already in the destination, so nothing is overwritten.

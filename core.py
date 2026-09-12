@@ -501,7 +501,7 @@ def build_plan(
             continue
 
         folder = photo_folder(output_dir, plan.country, plan.capture_date)
-        stem = f"{country_slug(plan.country)}_{plan.capture_date.date():%Y-%m-%d}"
+        stem = f"{country_slug(plan.country)}_{plan.capture_date.date():%y-%m-%d}"
         plan.destination_path = allocator.allocate(folder, stem, plan.source_path.suffix)
 
         if plan.country_source == SOURCE_GPS:
