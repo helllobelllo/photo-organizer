@@ -1,18 +1,19 @@
 # Photo Organizer
 
-Sorts travel photos into country folders and renames them from their own metadata.
+Sorts travel photos by country and place, and renames them from their own metadata.
 
 A photo taken in Paris on 5 June 2024 becomes:
 
 ```
-ORGANIZED_PHOTOS/France/2024/06-June/FRANCE_24-06-05_001.jpg
+ORGANIZED_PHOTOS/2024_France/Paris/FRANCE_PARIS_24-06-05_001.jpg
 ```
 
-Folders are always **Country / Year / Month**.
+Folders are always **Year_Country / Place**.
 
-Country comes from the GPS coordinates stored in the photo's EXIF data, looked up
-**offline** — your location history never leaves your machine. Photos without GPS
-(most dedicated cameras) fall back to an Excel travel log you keep yourself.
+Country and place come from the GPS coordinates stored in the photo's EXIF data,
+looked up **offline** — your location history never leaves your machine. Photos
+without GPS (most dedicated cameras) fall back to an Excel travel log you keep
+yourself.
 
 ## Install
 
@@ -33,6 +34,9 @@ The window has two buttons, meant to be used in order:
 1. **Scan input folder** — reads every photo and shows you exactly where each one
    would go. Nothing is moved. Photos that can't be placed appear in orange.
 2. **Organize & move photos** — moves them for real, after a confirmation prompt.
+
+A third button, **Re-file library**, re-checks photos that are *already* organized
+— see below.
 
 By default it reads from `Desktop\INPUT_PHOTO_ORGANIZOR` and writes to
 `Desktop\ORGANIZED_PHOTOS`. Both paths are editable in the window.
@@ -56,21 +60,46 @@ Nested imports commonly contain the same photo more than once (a backup folder
 alongside the originals). Those are caught by content — see Duplicate detection
 below.
 
-## The travel log (for photos without GPS)
+## Where "place" comes from
 
-Open `travel_log_template.xlsx`, fill in one row per trip, and save it somewhere
-you'll keep it:
+**Photos with GPS** get the nearest town or city from the offline GeoNames
+database: the Forbidden City gives `Beijing`, the Colosseum gives `Rome`.
 
-| Country | Start Date | End Date   |
-| ------- | ---------- | ---------- |
-| France  | 2024-06-01 | 2024-06-14 |
-| Italy   | 2024-06-15 | 2024-06-22 |
+Nearest-town lookup has one quirk: near big cities it often names a suburb or
+district. The Eiffel Tower resolves to `Vanves`, and the Bund to `Hongkou`. Left
+alone, one Paris trip would scatter across several folders. So the **travel log
+can override it**. If your log has a row covering that date, in the same country,
+with a Place filled in, that place wins. Log `France, Paris` for the week and every
+photo from it lands in `Paris`, whatever suburb GPS picked. The app shows these
+as matched by **GPS + log**.
 
-Any photo with no GPS but a capture date inside one of these ranges gets that
-country. Point the app at this file with the **Travel log** field.
+**Photos without GPS** take both country and place from the travel log.
 
-Dates must be `YYYY-MM-DD`. If two rows overlap and name different countries, the
-app warns you and sends the affected photos to `_NeedsReview` rather than guessing.
+A row with no Place files its photos under `Unknown`. Fill the Place in later and
+use **Re-file library** to move them.
+
+Countries get one spelling whichever source they came from: log `Vietnam` and GPS
+`Viet Nam` both become `Vietnam`. Otherwise one trip would split across two folders.
+
+## The travel log
+
+Open `travel_log_template.xlsx`, fill in one row per stay, and save it somewhere
+you'll keep it. The app picks up `travel_log.xlsx` from your Desktop automatically.
+
+| Country | Place | Start Date | End Date   |
+| ------- | ----- | ---------- | ---------- |
+| France  | Paris | 2024-06-01 | 2024-06-09 |
+| France  | Nice  | 2024-06-10 | 2024-06-14 |
+| Italy   | Rome  | 2024-06-15 | 2024-06-22 |
+
+Dates must be `YYYY-MM-DD`, and Place is optional. Logs from before the Place
+column existed still work.
+
+**Travel days:** the log only has dates, not times. So on a day covered by two
+places, a camera photo can't be placed, and it goes to `_NeedsReview` rather than
+being guessed. Photos with GPS are unaffected; they keep their GPS city. To avoid
+this, end one stay the day before the next begins, as in the example above. The
+app warns you about any overlapping rows.
 
 Regenerate a fresh blank template any time:
 
@@ -86,8 +115,8 @@ flagged** (shown in grey in the app) rather than filed a second time.
 
 The comparison is on **file content**, not filename — a SHA-256 hash of the bytes.
 Renaming is exactly what this tool does to your photos, so names are useless for
-identity; a photo already filed as `CHINA_26-06-01_001.ARW` is still recognised
-when you re-import it as `DSC00605.ARW`.
+identity; a photo already filed as `CHINA_BEIJING_26-06-01_001.ARW` is still
+recognised when you re-import it as `DSC00605.ARW`.
 
 Duplicates within a single batch are caught too: if the same photo appears twice
 in the input folder, the first is filed and the second is flagged.
@@ -107,32 +136,50 @@ be filed as a new photo.
 
 ## What lands in `_NeedsReview`
 
-A photo goes to `ORGANIZED_PHOTOS/_NeedsReview/` when it has no GPS and no travel
-log row covers its date, when no capture date can be read at all, or when its date
-falls into overlapping travel-log rows. Every run writes an `organizer_log_*.txt`
-into the output folder listing each file and the reason.
+A photo goes to `ORGANIZED_PHOTOS/_NeedsReview/` in four cases:
+
+- it has no GPS and no travel-log row covers its date
+- no capture date can be read at all
+- its date falls in travel-log rows for different countries
+- it has no GPS and its date falls in rows for different places
+
+Every run writes an `organizer_log_*.txt` into the output folder listing each file
+and the reason.
+
+## Re-file library
+
+Organizing only ever looks at the input folder. **Re-file library** instead
+re-checks every photo already in the output folder against the current rules and
+travel log, and moves the ones that no longer belong where they are. Use it after:
+
+- filling in a Place that was left blank, so photos move out of `Unknown`
+- adding a trip that explains photos sitting in `_NeedsReview`
+- overriding a GPS suburb, e.g. logging `Paris` to gather up `Vanves`
+
+It previews first, like a scan. Photos already in the right place keep their names
+and numbers, so running it when nothing has changed moves nothing. Nothing leaves
+the library and nothing is deleted.
 
 ## Folders and file naming
 
 ```
 ORGANIZED_PHOTOS/
-  China/
-    2025/
-      12-December/  CHINA_25-12-24_001.ARW
-    2026/
-      06-June/      CHINA_26-06-01_001.ARW
-                    CHINA_26-06-14_001.ARW
-      07-July/      CHINA_26-07-03_001.jpg
+  2025_Vietnam/
+    Old Quarter/  VIETNAM_OLD_QUARTER_25-01-10_001.jpg
+  2026_China/
+    Beijing/      CHINA_BEIJING_26-06-01_001.ARW
+                  CHINA_BEIJING_26-06-01_002.HEIC
+    Shanghai/     CHINA_SHANGHAI_26-06-10_001.ARW
+    Unknown/      CHINA_UNKNOWN_26-06-20_001.ARW
   _NeedsReview/
 ```
 
-Month folders are numbered so they sort chronologically rather than
-alphabetically. Files are named `COUNTRY_YY-MM-DD_NNN.ext`, where `NNN` starts
-at `001` and counts up for each photo sharing the same country and date.
+Files are named `COUNTRY_PLACE_YY-MM-DD_NNN.ext`, where `NNN` starts at `001` and
+counts up for each photo sharing the same country, place and date. Names are made
+filename-safe: uppercased, accents removed, spaces and punctuation turned into `_`.
 
-The year is two digits in the **filename** but stays four digits in the **folder**,
-so the full year is never lost — worth knowing, since `25` alone can't tell 1925
-from 2025.
+The year is two digits in the **filename** but four in the **folder**. The full year
+is never lost, which matters because `25` alone can't tell 1925 from 2025.
 
 Existing folders are reused, never replaced. Re-running is safe: numbering
 continues past whatever is already in the destination, so nothing is overwritten.
@@ -150,7 +197,8 @@ python organize_photos.py "C:\Users\You\Desktop\INPUT_PHOTO_ORGANIZOR" "C:\Users
 python organize_photos.py "C:\Users\You\Desktop\INPUT_PHOTO_ORGANIZOR" "C:\Users\You\Desktop\ORGANIZED_PHOTOS" --travel-log travel_log.xlsx --run
 ```
 
-Other flags: `--copy` (leave originals in place).
+Other flags: `--copy` (leave originals in place). Re-filing the library is
+available in the app only.
 
 ## Supported files
 
@@ -184,7 +232,7 @@ A corrupt or unreadable file is logged and skipped — it never stops the run.
 
 | File                          | Purpose                                             |
 | ----------------------------- | --------------------------------------------------- |
-| `core.py`                     | Metadata, country lookup, naming, moving             |
+| `core.py`                     | Metadata, country/place lookup, naming, moving       |
 | `ui.py`                       | The desktop window                                   |
 | `organize_photos.py`          | Command-line interface                               |
 | `make_travel_log_template.py` | Regenerates the blank travel log                     |

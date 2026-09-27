@@ -5,8 +5,8 @@ The UI (ui.py) and the CLI (organize_photos.py) are both thin wrappers around th
 
 from __future__ import annotations
 
-import calendar
 import datetime as dt
+import functools
 import hashlib
 import os
 import re
@@ -24,7 +24,10 @@ PHOTO_EXTENSIONS = {
 
 NEEDS_REVIEW_DIR = "_NeedsReview"
 
+UNKNOWN_PLACE = "Unknown"
+
 SOURCE_GPS = "GPS"
+SOURCE_GPS_LOG = "GPS + log"
 SOURCE_TRAVEL_LOG = "Travel log"
 SOURCE_NONE = "-"
 
@@ -39,6 +42,7 @@ class PhotoPlan:
     latitude: float | None = None
     longitude: float | None = None
     country: str | None = None
+    place: str | None = None
     country_source: str = SOURCE_NONE
     destination_path: Path | None = None
     review_reason: str | None = None
@@ -50,7 +54,8 @@ class PhotoPlan:
 
     @property
     def needs_review(self) -> bool:
-        return self.country is None and not self.is_duplicate
+        unplaceable = self.country is None or self.capture_date is None
+        return unplaceable and not self.is_duplicate
 
 
 @dataclass
@@ -203,7 +208,6 @@ def resolve_countries_by_gps(plans: list[PhotoPlan]) -> None:
     if not located:
         return
 
-    import pycountry
     import reverse_geocoder
 
     coordinates = [(p.latitude, p.longitude) for p in located]
@@ -213,8 +217,8 @@ def resolve_countries_by_gps(plans: list[PhotoPlan]) -> None:
         code = (result or {}).get("cc")
         if not code:
             continue
-        country = pycountry.countries.get(alpha_2=code)
-        plan.country = country.name if country else code
+        plan.country = canonical_country(code)
+        plan.place = (result.get("name") or "").strip() or None
         plan.country_source = SOURCE_GPS
 
 
@@ -236,13 +240,16 @@ def load_travel_log(path: Path) -> tuple[list[dict], list[str]]:
         start_col = header.index("start date")
         end_col = header.index("end date")
     except ValueError:
-        return [], ["Travel log must have columns: Country, Start Date, End Date."]
+        return [], ["Travel log must have columns: Country, Place, Start Date, End Date."]
+    place_col = header.index("place") if "place" in header else None
 
     entries: list[dict] = []
     for line_number, row in enumerate(rows[1:], start=2):
         country = row[country_col] if country_col < len(row) else None
         start = row[start_col] if start_col < len(row) else None
         end = row[end_col] if end_col < len(row) else None
+        place = row[place_col] if place_col is not None and place_col < len(row) else None
+        place = str(place).strip() if place is not None and str(place).strip() else None
 
         if not country or start is None or end is None:
             continue
@@ -258,9 +265,13 @@ def load_travel_log(path: Path) -> tuple[list[dict], list[str]]:
             )
             continue
 
-        entries.append(
-            {"country": str(country).strip(), "start": start_date, "end": end_date, "row": line_number}
-        )
+        entries.append({
+            "country": str(country).strip(),
+            "place": place,
+            "start": start_date,
+            "end": end_date,
+            "row": line_number,
+        })
 
     warnings.extend(_detect_overlaps(entries))
     return entries, warnings
@@ -280,44 +291,111 @@ def _coerce_date(value) -> dt.date | None:
     return None
 
 
+@functools.lru_cache(maxsize=None)
+def canonical_country(name: str) -> str:
+    """One spelling per country whether it came from GPS or the log.
+
+    Otherwise a trip splits into '2025_Viet Nam' (GPS) and '2025_Vietnam' (log).
+    Prefers the everyday name where pycountry has one ('South Korea' over
+    'Korea, Republic of'); text pycountry doesn't recognise is kept as typed.
+    """
+    import pycountry
+
+    try:
+        country = pycountry.countries.lookup(name.strip())
+    except LookupError:
+        return name.strip()
+    return getattr(country, "common_name", None) or country.name
+
+
+@functools.lru_cache(maxsize=None)
+def _country_key(name: str) -> str:
+    """Compare countries by ISO code, so 'Viet Nam' from GPS matches 'Vietnam' in the log."""
+    import pycountry
+
+    try:
+        return pycountry.countries.lookup(name.strip()).alpha_2
+    except LookupError:
+        return name.strip().lower()
+
+
+def _label(entry: dict) -> str:
+    return f"{entry['country']}, {entry['place']}" if entry["place"] else entry["country"]
+
+
 def _detect_overlaps(entries: list[dict]) -> list[str]:
     warnings = []
     for i, first in enumerate(entries):
         for second in entries[i + 1:]:
-            if first["start"] <= second["end"] and second["start"] <= first["end"]:
-                if first["country"].lower() != second["country"].lower():
-                    warnings.append(
-                        f"Travel log rows {first['row']} ({first['country']}) and "
-                        f"{second['row']} ({second['country']}) overlap in dates - "
-                        f"photos in the overlap will go to {NEEDS_REVIEW_DIR}."
-                    )
+            if not (first["start"] <= second["end"] and second["start"] <= first["end"]):
+                continue
+            rows = (
+                f"Travel log rows {first['row']} ({_label(first)}) and "
+                f"{second['row']} ({_label(second)}) overlap in dates"
+            )
+            if _country_key(first["country"]) != _country_key(second["country"]):
+                warnings.append(f"{rows} - photos in the overlap will go to {NEEDS_REVIEW_DIR}.")
+            elif (
+                first["place"] and second["place"]
+                and first["place"].lower() != second["place"].lower()
+            ):
+                warnings.append(
+                    f"{rows} - photos without GPS in the overlap will go to "
+                    f"{NEEDS_REVIEW_DIR}; photos with GPS keep their GPS city."
+                )
     return warnings
 
 
-def resolve_countries_by_travel_log(plans: list[PhotoPlan], entries: list[dict]) -> None:
-    """Fill in countries for GPS-less photos using the travel log date ranges."""
+def resolve_by_travel_log(plans: list[PhotoPlan], entries: list[dict]) -> None:
+    """Use travel-log date ranges to fill in country and place.
+
+    Photos without GPS take both country and place from the log. Photos with GPS
+    keep their GPS country; the log only replaces their place, and only when it
+    names exactly one place for that date in that same country.
+    """
     if not entries:
         return
 
     for plan in plans:
-        if plan.country is not None or plan.capture_date is None:
+        if plan.capture_date is None:
             continue
 
-        captured = plan.capture_date.date()
-        matches = {
-            entry["country"]
-            for entry in entries
-            if entry["start"] <= captured <= entry["end"]
-        }
+        day = plan.capture_date.date()
+        matches = [e for e in entries if e["start"] <= day <= e["end"]]
+        if not matches:
+            continue
 
-        if len(matches) == 1:
-            plan.country = matches.pop()
-            plan.country_source = SOURCE_TRAVEL_LOG
-        elif len(matches) > 1:
+        if plan.country is not None:
+            key = _country_key(plan.country)
+            places = {
+                e["place"].lower(): e["place"]
+                for e in matches
+                if e["place"] and _country_key(e["country"]) == key
+            }
+            if len(places) == 1:
+                plan.place = next(iter(places.values()))
+                plan.country_source = SOURCE_GPS_LOG
+            continue
+
+        countries = {_country_key(e["country"]): canonical_country(e["country"]) for e in matches}
+        if len(countries) > 1:
             plan.review_reason = (
-                f"Capture date {captured} matches several travel-log countries "
-                f"({', '.join(sorted(matches))})."
+                f"Capture date {day} matches several travel-log countries "
+                f"({', '.join(sorted(countries.values()))})."
             )
+            continue
+
+        places = {e["place"].lower(): e["place"] for e in matches if e["place"]}
+        if len(places) > 1:
+            plan.review_reason = (
+                f"Capture date {day} matches several travel-log places "
+                f"({', '.join(sorted(places.values()))})."
+            )
+            continue
+
+        plan.country = next(iter(countries.values()))
+        plan.place = next(iter(places.values())) if places else None
+        plan.country_source = SOURCE_TRAVEL_LOG
 
 
 # --------------------------------------------------------------------------------------
@@ -409,7 +487,7 @@ def find_duplicate(
 
 
 class _NameAllocator:
-    """Hands out the next free sequence number per (folder, country, date).
+    """Hands out the next free sequence number per (folder, country, place, date).
 
     Numbers are reserved by stem, ignoring extension, so a HEIC and an ARW taken
     on the same day get different numbers instead of both landing on _001 and
@@ -438,10 +516,58 @@ class _NameAllocator:
             counter += 1
 
 
-def photo_folder(output_dir: Path, country: str, captured: dt.datetime) -> Path:
-    """Country/Year/Month, e.g. ORGANIZED_PHOTOS/China/2026/06-June."""
-    month = f"{captured.month:02d}-{calendar.month_name[captured.month]}"
-    return output_dir / country / f"{captured.year:04d}" / month
+_UNSAFE_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _folder_name(text: str) -> str:
+    """Travel-log text ends up in folder names, so strip what Windows forbids."""
+    cleaned = _UNSAFE_PATH_CHARS.sub("-", text).strip().rstrip(". ")
+    return cleaned or UNKNOWN_PLACE
+
+
+def photo_folder(output_dir: Path, country: str, place: str | None, captured: dt.datetime) -> Path:
+    """Year_Country/Place, e.g. ORGANIZED_PHOTOS/2026_China/Beijing."""
+    return (
+        output_dir
+        / _folder_name(f"{captured.year:04d}_{country}")
+        / _folder_name(place or UNKNOWN_PLACE)
+    )
+
+
+def photo_stem(country: str, place: str | None, captured: dt.datetime) -> str:
+    """CHINA_BEIJING_26-06-01 - the allocator appends the _NNN sequence number."""
+    return (
+        f"{country_slug(country)}_{country_slug(place or UNKNOWN_PLACE)}"
+        f"_{captured.date():%y-%m-%d}"
+    )
+
+
+def _resolve(plans: list[PhotoPlan], travel_log: Path | None, summary: RunSummary) -> None:
+    resolve_countries_by_gps(plans)
+    if travel_log and Path(travel_log).exists():
+        entries, warnings = load_travel_log(Path(travel_log))
+        summary.warnings.extend(warnings)
+        resolve_by_travel_log(plans, entries)
+
+
+def _explain_review(plan: PhotoPlan) -> None:
+    if plan.review_reason is not None:
+        return
+    if plan.capture_date is None:
+        plan.review_reason = "No capture date could be read from this file."
+    elif plan.latitude is None:
+        plan.review_reason = (
+            f"No GPS data, and no travel-log entry covers {plan.capture_date.date()}."
+        )
+    else:
+        plan.review_reason = "GPS coordinates could not be matched to a country."
+
+
+def _tally(plan: PhotoPlan, summary: RunSummary) -> None:
+    if plan.country_source in (SOURCE_GPS, SOURCE_GPS_LOG):
+        summary.by_gps += 1
+    else:
+        summary.by_travel_log += 1
 
 
 def build_plan(
@@ -452,18 +578,11 @@ def build_plan(
     """Scan the input folder and compute every photo's destination. Touches no files."""
     summary = RunSummary()
     photos, others = find_photos(input_dir)
-
     summary.skipped_files = others
 
     plans = [extract_metadata(path) for path in photos]
     summary.total = len(plans)
-
-    resolve_countries_by_gps(plans)
-
-    if travel_log and Path(travel_log).exists():
-        entries, warnings = load_travel_log(Path(travel_log))
-        summary.warnings.extend(warnings)
-        resolve_countries_by_travel_log(plans, entries)
+    _resolve(plans, travel_log, summary)
 
     allocator = _NameAllocator()
     review_dir = output_dir / NEEDS_REVIEW_DIR
@@ -483,31 +602,59 @@ def build_plan(
         except OSError:
             pass
 
-        if plan.country is None or plan.capture_date is None:
-            if plan.review_reason is None:
-                if plan.capture_date is None:
-                    plan.review_reason = "No capture date could be read from this file."
-                elif plan.latitude is None:
-                    plan.review_reason = (
-                        "No GPS data, and no travel-log entry covers "
-                        f"{plan.capture_date.date()}."
-                    )
-                else:
-                    plan.review_reason = "GPS coordinates could not be matched to a country."
+        if plan.needs_review:
+            _explain_review(plan)
             plan.destination_path = allocator.allocate(
                 review_dir, plan.source_path.stem, plan.source_path.suffix
             )
             summary.needs_review += 1
             continue
 
-        folder = photo_folder(output_dir, plan.country, plan.capture_date)
-        stem = f"{country_slug(plan.country)}_{plan.capture_date.date():%y-%m-%d}"
+        folder = photo_folder(output_dir, plan.country, plan.place, plan.capture_date)
+        stem = photo_stem(plan.country, plan.place, plan.capture_date)
         plan.destination_path = allocator.allocate(folder, stem, plan.source_path.suffix)
+        _tally(plan, summary)
 
-        if plan.country_source == SOURCE_GPS:
-            summary.by_gps += 1
-        else:
-            summary.by_travel_log += 1
+    return plans, summary
+
+
+def refile_library(
+    output_dir: Path,
+    travel_log: Path | None = None,
+) -> tuple[list[PhotoPlan], RunSummary]:
+    """Re-derive where every photo already in the library belongs. Touches no files.
+
+    Run this after editing the travel log or changing the layout. Photos already in
+    the right folder under the right name keep their number. Photos in _NeedsReview
+    that the log can now place get filed; those it still can't place stay put.
+    """
+    summary = RunSummary()
+    photos, _ = find_photos(output_dir)
+    plans = [extract_metadata(path) for path in photos]
+    summary.total = len(plans)
+    _resolve(plans, travel_log, summary)
+
+    allocator = _NameAllocator()
+    review_dir = output_dir / NEEDS_REVIEW_DIR
+
+    for plan in plans:
+        current = plan.source_path
+
+        if plan.needs_review:
+            _explain_review(plan)
+            summary.needs_review += 1
+            if current.parent != review_dir:
+                plan.destination_path = allocator.allocate(review_dir, current.stem, current.suffix)
+            continue
+
+        _tally(plan, summary)
+        folder = photo_folder(output_dir, plan.country, plan.place, plan.capture_date)
+        stem = photo_stem(plan.country, plan.place, plan.capture_date)
+        already_right = current.parent == folder and re.fullmatch(
+            re.escape(stem) + r"_\d{3}", current.stem, re.IGNORECASE
+        )
+        if not already_right:
+            plan.destination_path = allocator.allocate(folder, stem, current.suffix)
 
     return plans, summary
 

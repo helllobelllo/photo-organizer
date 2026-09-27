@@ -44,6 +44,7 @@ class PhotoOrganizerApp:
 
         self.plans: list[core.PhotoPlan] = []
         self.summary: core.RunSummary | None = None
+        self.mode = "import"
         self.events: queue.Queue = queue.Queue()
 
         self._build_widgets()
@@ -74,7 +75,7 @@ class PhotoOrganizerApp:
 
         ttk.Label(
             folders,
-            text="Photos are filed as Country \\ Year \\ Month.",
+            text="Photos are filed as Year_Country \\ Place, e.g. 2026_China \\ Beijing.",
             foreground="#555555",
         ).grid(row=3, column=1, sticky="w", padx=6, pady=(0, 8))
 
@@ -91,6 +92,11 @@ class PhotoOrganizerApp:
         )
         self.organize_button.pack(side="left", padx=8)
 
+        self.refile_button = ttk.Button(
+            actions, text="Re-file library", command=self._start_refile
+        )
+        self.refile_button.pack(side="left", padx=(16, 8))
+
         ttk.Button(actions, text="Open output folder", command=self._open_output).pack(side="left")
 
         self.progress = ttk.Progressbar(actions, mode="determinate", length=200)
@@ -99,14 +105,15 @@ class PhotoOrganizerApp:
         preview = ttk.LabelFrame(self.root, text="Planned result")
         preview.pack(fill="both", expand=True, **padding)
 
-        columns = ("file", "date", "country", "matched", "newname")
+        columns = ("file", "date", "country", "place", "matched", "newname")
         self.tree = ttk.Treeview(preview, columns=columns, show="headings", height=12)
         for column, heading, width in (
-            ("file", "Current file", 210),
-            ("date", "Capture date", 110),
-            ("country", "Country", 140),
-            ("matched", "Matched by", 90),
-            ("newname", "New name", 330),
+            ("file", "Current file", 190),
+            ("date", "Capture date", 95),
+            ("country", "Country", 110),
+            ("place", "Place", 110),
+            ("matched", "Matched by", 85),
+            ("newname", "New location", 340),
         ):
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=width, anchor="w")
@@ -117,6 +124,7 @@ class PhotoOrganizerApp:
         scrollbar.pack(side="right", fill="y")
         self.tree.tag_configure("review", foreground="#b45309")
         self.tree.tag_configure("duplicate", foreground="#6b7280")
+        self.tree.tag_configure("settled", foreground="#9ca3af")
 
         log_frame = ttk.LabelFrame(self.root, text="Messages")
         log_frame.pack(fill="both", **padding)
@@ -183,9 +191,10 @@ class PhotoOrganizerApp:
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
         self.scan_button.configure(state=state)
+        self.refile_button.configure(state=state)
         if busy:
             self.organize_button.configure(state="disabled")
-        elif self.plans:
+        elif any(p.destination_path for p in self.plans):
             self.organize_button.configure(state="normal")
 
     # ---------------------------------------------------------------- scanning
@@ -193,25 +202,41 @@ class PhotoOrganizerApp:
     def _start_scan(self) -> None:
         input_dir = Path(self.input_var.get())
         output_dir = Path(self.output_var.get())
-
         if not input_dir.is_dir():
             messagebox.showerror("Input folder not found", f"This folder does not exist:\n{input_dir}")
             return
+        self._begin_planning(
+            "import",
+            "Scanning photos and looking up locations...",
+            lambda log: core.build_plan(input_dir, output_dir, log),
+        )
 
+    def _start_refile(self) -> None:
+        output_dir = Path(self.output_var.get())
+        if not output_dir.is_dir():
+            messagebox.showerror("Output folder not found", f"This folder does not exist:\n{output_dir}")
+            return
+        self._begin_planning(
+            "refile",
+            "Checking every photo in the library against the current travel log...",
+            lambda log: core.refile_library(output_dir, log),
+        )
+
+    def _begin_planning(self, mode: str, status: str, plan_fn) -> None:
+        self.mode = mode
         self._clear_log()
         self.tree.delete(*self.tree.get_children())
         self.plans, self.summary = [], None
         self._set_busy(True)
         self.progress.configure(mode="indeterminate")
         self.progress.start(12)
-        self.status_var.set("Scanning photos and looking up locations...")
+        self.status_var.set(status)
 
         travel_log = Path(self.travel_log_var.get()) if self.travel_log_var.get().strip() else None
 
         def worker():
             try:
-                plans, summary = core.build_plan(input_dir, output_dir, travel_log)
-                self.events.put(("scan_done", (plans, summary)))
+                self.events.put(("scan_done", plan_fn(travel_log)))
             except Exception as error:
                 self.events.put(("error", str(error)))
 
@@ -223,42 +248,66 @@ class PhotoOrganizerApp:
         self.progress.configure(mode="determinate", value=0)
         self._set_busy(False)
 
+        refiling = self.mode == "refile"
+        where = "library" if refiling else "input folder"
+
         if not self.plans:
-            self.status_var.set("No photos found in the input folder.")
-            self._log("The input folder contains no photos. Drop some in and scan again.")
+            self.status_var.set(f"No photos found in the {where}.")
+            self._log(f"The {where} contains no photos.")
             self.organize_button.configure(state="disabled")
             return
 
+        output_dir = Path(self.output_var.get())
         for plan in self.plans:
             date_text = f"{plan.capture_date:%Y-%m-%d}" if plan.capture_date else "unknown"
+            place = ""
 
             if plan.is_duplicate:
                 country, matched = "Duplicate", "-"
-                relative = f"stays in input - already have {plan.duplicate_of.name}"
+                target = f"stays in input - already have {plan.duplicate_of.name}"
                 tags = ("duplicate",)
+            elif plan.needs_review:
+                country, matched = core.NEEDS_REVIEW_DIR, plan.country_source
+                target = (
+                    str(plan.destination_path.relative_to(output_dir))
+                    if plan.destination_path
+                    else "stays in _NeedsReview"
+                )
+                tags = ("review",)
             else:
-                country = plan.country or core.NEEDS_REVIEW_DIR
-                matched = plan.country_source
-                relative = str(plan.destination_path.relative_to(Path(self.output_var.get())))
-                tags = ("review",) if plan.needs_review else ()
+                country, matched = plan.country, plan.country_source
+                place = plan.place or core.UNKNOWN_PLACE
+                target = (
+                    str(plan.destination_path.relative_to(output_dir))
+                    if plan.destination_path
+                    else "already in the right place"
+                )
+                tags = () if plan.destination_path else ("settled",)
 
             self.tree.insert(
                 "",
                 "end",
-                values=(plan.source_path.name, date_text, country, matched, relative),
+                values=(plan.source_path.name, date_text, country, place, matched, target),
                 tags=tags,
             )
 
         summary = self.summary
+        moving = sum(1 for p in self.plans if p.destination_path)
         self.status_var.set(
-            f"{summary.total} photo(s) ready - {summary.by_gps} by GPS, "
+            f"{summary.total} photo(s) - {summary.by_gps} by GPS, "
             f"{summary.by_travel_log} by travel log, {summary.needs_review} need review, "
-            f"{summary.duplicates} duplicate(s)."
+            f"{summary.duplicates} duplicate(s). {moving} to move."
         )
-        self._log(
-            f"Found {summary.total} photo(s). Nothing has been moved yet - "
-            "review the table, then click 'Organize & move photos'."
-        )
+        if refiling and moving == 0:
+            self._log(
+                "Your library already matches the current layout and travel log - nothing to move."
+            )
+            self.organize_button.configure(state="disabled")
+        else:
+            self._log(
+                f"Found {summary.total} photo(s) in the {where}; {moving} would move. "
+                "Nothing has been moved yet - review the table, then click 'Organize & move photos'."
+            )
         for warning in summary.warnings:
             self._log(f"Warning: {warning}")
         if summary.skipped_files:
@@ -273,8 +322,9 @@ class PhotoOrganizerApp:
             )
         if summary.needs_review:
             self._log(
-                f"{summary.needs_review} photo(s) will go to '{core.NEEDS_REVIEW_DIR}' "
-                "(shown in orange). Adding a travel log usually fixes these."
+                f"{summary.needs_review} photo(s) belong in '{core.NEEDS_REVIEW_DIR}' "
+                "(shown in orange). Adding the trip to the travel log, then clicking "
+                "'Re-file library', files them properly."
             )
 
     # ---------------------------------------------------------------- organizing
@@ -283,16 +333,23 @@ class PhotoOrganizerApp:
         if not self.plans or self.summary is None:
             return
 
-        movable = len(self.plans) - self.summary.duplicates
-        message = (
-            f"{movable} photo(s) will be moved out of the input folder into:\n"
-            f"{self.output_var.get()}\n\n"
-        )
-        message += (
-            f"{self.summary.duplicates} duplicate(s) will stay in the input folder.\n\nContinue?"
-            if self.summary.duplicates
-            else "The input folder will be left empty. Continue?"
-        )
+        movable = sum(1 for p in self.plans if p.destination_path)
+        if self.mode == "refile":
+            message = (
+                f"{movable} photo(s) already in your library will be moved and renamed "
+                f"to match the current layout and travel log.\n\n"
+                "Nothing leaves the library and nothing is deleted. Continue?"
+            )
+        else:
+            message = (
+                f"{movable} photo(s) will be moved out of the input folder into:\n"
+                f"{self.output_var.get()}\n\n"
+            )
+            message += (
+                f"{self.summary.duplicates} duplicate(s) will stay in the input folder.\n\nContinue?"
+                if self.summary.duplicates
+                else "The input folder will be left empty. Continue?"
+            )
         if not messagebox.askyesno("Move photos?", message):
             return
 
@@ -301,8 +358,8 @@ class PhotoOrganizerApp:
         self.status_var.set("Moving photos...")
 
         plans, summary = self.plans, self.summary
-        input_dir = Path(self.input_var.get())
         output_dir = Path(self.output_var.get())
+        cleanup_dir = output_dir if self.mode == "refile" else Path(self.input_var.get())
 
         def worker():
             try:
@@ -310,7 +367,7 @@ class PhotoOrganizerApp:
                     plans, summary, move=True,
                     progress=lambda done, total: self.events.put(("progress", done)),
                 )
-                core.remove_empty_subfolders(input_dir)
+                core.remove_empty_subfolders(cleanup_dir)
                 log_path = core.write_review_log(output_dir, plans, summary)
                 self.events.put(("organize_done", (summary, log_path)))
             except Exception as error:
@@ -325,29 +382,33 @@ class PhotoOrganizerApp:
         self._set_busy(False)
         self.organize_button.configure(state="disabled")
 
-        remaining = (
-            f"{summary.duplicates} duplicate(s) left in the input folder."
-            if summary.duplicates
-            else "Input folder is now empty."
-        )
+        refiling = self.mode == "refile"
+        if refiling:
+            remaining = "Library re-filed."
+        elif summary.duplicates:
+            remaining = f"{summary.duplicates} duplicate(s) left in the input folder."
+        else:
+            remaining = "Input folder is now empty."
         self.status_var.set(f"Done - {summary.moved} photo(s) moved. {remaining}")
         self._log("")
         self._log(f"Moved {summary.moved} of {summary.total} photo(s).")
         self._log(f"  Matched by GPS       : {summary.by_gps}")
         self._log(f"  Matched by travel log: {summary.by_travel_log}")
         self._log(f"  Needed review        : {summary.needs_review}")
-        self._log(f"  Duplicates skipped   : {summary.duplicates}")
+        if not refiling:
+            self._log(f"  Duplicates skipped   : {summary.duplicates}")
         if summary.failed:
             self._log(f"  Failed               : {len(summary.failed)}")
             for path, reason in summary.failed:
                 self._log(f"    - {path.name}: {reason}")
-        left = core.remaining_files(Path(self.input_var.get()))
-        self._log("")
-        if left:
-            self._log(f"Still in the input folder ({len(left)} file(s)):")
-            self._log_paths(left, Path(self.input_var.get()))
-        else:
-            self._log("The input folder is now empty.")
+        if not refiling:
+            left = core.remaining_files(Path(self.input_var.get()))
+            self._log("")
+            if left:
+                self._log(f"Still in the input folder ({len(left)} file(s)):")
+                self._log_paths(left, Path(self.input_var.get()))
+            else:
+                self._log("The input folder is now empty.")
         self._log(f"Log written to: {log_path}")
 
         self.tree.delete(*self.tree.get_children())
